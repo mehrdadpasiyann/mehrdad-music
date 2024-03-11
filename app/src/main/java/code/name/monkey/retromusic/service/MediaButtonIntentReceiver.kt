@@ -15,19 +15,25 @@
 
 package code.name.monkey.retromusic.service
 
-import android.annotation.SuppressLint
-import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.os.Handler
+import android.os.Looper
 import android.os.Message
 import android.os.PowerManager
 import android.os.PowerManager.WakeLock
 import android.util.Log
 import android.view.KeyEvent
 import androidx.core.content.ContextCompat
+import androidx.core.content.getSystemService
+import androidx.media.session.MediaButtonReceiver
 import code.name.monkey.retromusic.BuildConfig
-import code.name.monkey.retromusic.service.MusicService.*
+import code.name.monkey.retromusic.service.MusicService.Companion.ACTION_PAUSE
+import code.name.monkey.retromusic.service.MusicService.Companion.ACTION_PLAY
+import code.name.monkey.retromusic.service.MusicService.Companion.ACTION_REWIND
+import code.name.monkey.retromusic.service.MusicService.Companion.ACTION_SKIP
+import code.name.monkey.retromusic.service.MusicService.Companion.ACTION_STOP
+import code.name.monkey.retromusic.service.MusicService.Companion.ACTION_TOGGLE_PAUSE
 
 
 /**
@@ -36,7 +42,7 @@ import code.name.monkey.retromusic.service.MusicService.*
  * Double press: actionNext track
  * Triple press: previous track
  */
-class MediaButtonIntentReceiver : BroadcastReceiver() {
+class MediaButtonIntentReceiver : MediaButtonReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
         if (DEBUG) Log.v(TAG, "Received intent: $intent")
@@ -56,21 +62,19 @@ class MediaButtonIntentReceiver : BroadcastReceiver() {
         private var mClickCounter = 0
         private var mLastClickTime: Long = 0
 
-        @SuppressLint("HandlerLeak") // false alarm, handler is already static
-        private val mHandler = object : Handler() {
+        private val mHandler = object : Handler(Looper.getMainLooper()) {
 
             override fun handleMessage(msg: Message) {
                 when (msg.what) {
                     MSG_HEADSET_DOUBLE_CLICK_TIMEOUT -> {
                         val clickCount = msg.arg1
-                        val command: String?
 
                         if (DEBUG) Log.v(TAG, "Handling headset click, count = $clickCount")
-                        when (clickCount) {
-                            1 -> command = ACTION_TOGGLE_PAUSE
-                            2 -> command = ACTION_SKIP
-                            3 -> command = ACTION_REWIND
-                            else -> command = null
+                        val command = when (clickCount) {
+                            1 -> ACTION_TOGGLE_PAUSE
+                            2 -> ACTION_SKIP
+                            3 -> ACTION_REWIND
+                            else -> null
                         }
 
                         if (command != null) {
@@ -84,6 +88,7 @@ class MediaButtonIntentReceiver : BroadcastReceiver() {
         }
 
         fun handleIntent(context: Context, intent: Intent): Boolean {
+            println("Intent Action: ${intent.action}")
             val intentAction = intent.action
             if (Intent.ACTION_MEDIA_BUTTON == intentAction) {
                 val event = intent.getParcelableExtra<KeyEvent>(Intent.EXTRA_KEY_EVENT)
@@ -165,8 +170,8 @@ class MediaButtonIntentReceiver : BroadcastReceiver() {
         private fun acquireWakeLockAndSendMessage(context: Context, msg: Message, delay: Long) {
             if (wakeLock == null) {
                 val appContext = context.applicationContext
-                val pm = appContext.getSystemService(Context.POWER_SERVICE) as PowerManager
-                wakeLock = pm.newWakeLock(
+                val pm = appContext.getSystemService<PowerManager>()
+                wakeLock = pm?.newWakeLock(
                     PowerManager.PARTIAL_WAKE_LOCK,
                     "RetroMusicApp:Wakelock headset button"
                 )

@@ -1,82 +1,159 @@
+/*
+ * Copyright (c) 2020 Hemanth Savarla.
+ *
+ * Licensed under the GNU General Public License v3
+ *
+ * This is free software: you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+ *
+ * This software is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
+ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+ * See the GNU General Public License for more details.
+ *
+ */
 package code.name.monkey.retromusic.adapter.song
 
 import android.view.MenuItem
 import android.view.View
-import androidx.appcompat.app.AppCompatActivity
+import androidx.core.view.isVisible
+import androidx.fragment.app.FragmentActivity
+import androidx.lifecycle.lifecycleScope
 import code.name.monkey.retromusic.R
-import code.name.monkey.retromusic.R.menu
-import code.name.monkey.retromusic.dialogs.RemoveFromPlaylistDialog
-import code.name.monkey.retromusic.interfaces.CabHolder
-import code.name.monkey.retromusic.model.PlaylistSong
+import code.name.monkey.retromusic.db.PlaylistEntity
+import code.name.monkey.retromusic.db.toSongEntity
+import code.name.monkey.retromusic.db.toSongsEntity
+import code.name.monkey.retromusic.dialogs.RemoveSongFromPlaylistDialog
+import code.name.monkey.retromusic.extensions.accentColor
+import code.name.monkey.retromusic.extensions.accentOutlineColor
+import code.name.monkey.retromusic.fragments.LibraryViewModel
+import code.name.monkey.retromusic.helper.MusicPlayerRemote
+import code.name.monkey.retromusic.interfaces.ICabHolder
 import code.name.monkey.retromusic.model.Song
-import code.name.monkey.retromusic.util.ViewUtil
+import com.google.android.material.button.MaterialButton
 import com.h6ah4i.android.widget.advrecyclerview.draggable.DraggableItemAdapter
-import com.h6ah4i.android.widget.advrecyclerview.draggable.DraggableItemViewHolder
 import com.h6ah4i.android.widget.advrecyclerview.draggable.ItemDraggableRange
-import com.h6ah4i.android.widget.advrecyclerview.draggable.annotation.DraggableItemStateFlags
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import org.koin.androidx.viewmodel.ext.android.viewModel
 
 class OrderablePlaylistSongAdapter(
-    activity: AppCompatActivity,
-    dataSet: ArrayList<Song>,
+    private val playlist: PlaylistEntity,
+    activity: FragmentActivity,
+    dataSet: MutableList<Song>,
     itemLayoutRes: Int,
-    cabHolder: CabHolder?,
-    private val onMoveItemListener: OnMoveItemListener?
-) : PlaylistSongAdapter(
-    activity, dataSet, itemLayoutRes, cabHolder
-), DraggableItemAdapter<OrderablePlaylistSongAdapter.ViewHolder> {
+    ICabHolder: ICabHolder?,
+) : AbsOffsetSongAdapter(activity, dataSet, itemLayoutRes, ICabHolder),
+    DraggableItemAdapter<OrderablePlaylistSongAdapter.ViewHolder> {
+
+    val libraryViewModel: LibraryViewModel by activity.viewModel()
 
     init {
-        setMultiSelectMenuRes(menu.menu_playlists_songs_selection)
+        this.setHasStableIds(true)
+        this.setMultiSelectMenuRes(R.menu.menu_playlists_songs_selection)
+    }
+
+    override fun getItemId(position: Int): Long {
+        // requires static value, it means need to keep the same value
+        // even if the item position has been changed.
+        return if (position != 0) {
+            dataSet[position - 1].id
+        } else {
+            -1
+        }
     }
 
     override fun createViewHolder(view: View): SongAdapter.ViewHolder {
         return ViewHolder(view)
     }
 
-    override fun getItemId(position: Int): Long {
-        var positionFinal = position
-        positionFinal--
-
-        var long: Long = 0
-        if (positionFinal < 0) {
-            long = -2
-        } else {
-            if (dataSet[positionFinal] is PlaylistSong) {
-                long = (dataSet[positionFinal] as PlaylistSong).idInPlayList.toLong()
-            }
-        }
-        return long
+    override fun getItemViewType(position: Int): Int {
+        return if (position == 0) OFFSET_ITEM else SONG
     }
 
-    override fun onMultipleItemAction(menuItem: MenuItem, selection: ArrayList<Song>) {
-        when (menuItem.itemId) {
-            R.id.action_remove_from_playlist -> {
-                RemoveFromPlaylistDialog.create(selection as ArrayList<PlaylistSong>)
-                    .show(activity.supportFragmentManager, "ADD_PLAYLIST")
-                return
+    override fun onBindViewHolder(holder: SongAdapter.ViewHolder, position: Int) {
+        if (holder.itemViewType == OFFSET_ITEM) {
+            val viewHolder = holder as ViewHolder
+            viewHolder.playAction?.let {
+                it.setOnClickListener {
+                    MusicPlayerRemote.openQueue(dataSet, 0, true)
+                }
+                it.accentOutlineColor()
             }
+            viewHolder.shuffleAction?.let {
+                it.setOnClickListener {
+                    MusicPlayerRemote.openAndShuffleQueue(dataSet, true)
+                }
+                it.accentColor()
+            }
+        } else {
+            super.onBindViewHolder(holder, position - 1)
         }
-        super.onMultipleItemAction(menuItem, selection)
+    }
+
+    override fun onMultipleItemAction(menuItem: MenuItem, selection: List<Song>) {
+        when (menuItem.itemId) {
+            R.id.action_remove_from_playlist -> RemoveSongFromPlaylistDialog.create(
+                selection.toSongsEntity(
+                    playlist
+                )
+            )
+                .show(activity.supportFragmentManager, "REMOVE_FROM_PLAYLIST")
+            else -> super.onMultipleItemAction(menuItem, selection)
+        }
+    }
+
+    inner class ViewHolder(itemView: View) : AbsOffsetSongAdapter.ViewHolder(itemView) {
+        val playAction: MaterialButton? = itemView.findViewById(R.id.playAction)
+        val shuffleAction: MaterialButton? = itemView.findViewById(R.id.shuffleAction)
+
+        override var songMenuRes: Int
+            get() = R.menu.menu_item_playlist_song
+            set(value) {
+                super.songMenuRes = value
+            }
+
+        override fun onSongMenuItemClick(item: MenuItem): Boolean {
+            when (item.itemId) {
+                R.id.action_remove_from_playlist -> {
+                    RemoveSongFromPlaylistDialog.create(song.toSongEntity(playlist.playListId))
+                        .show(activity.supportFragmentManager, "REMOVE_FROM_PLAYLIST")
+                    return true
+                }
+            }
+            return super.onSongMenuItemClick(item)
+        }
+
+        init {
+            dragView?.isVisible = true
+        }
     }
 
     override fun onCheckCanStartDrag(holder: ViewHolder, position: Int, x: Int, y: Int): Boolean {
-        return onMoveItemListener != null && position > 0 && (ViewUtil.hitTest(
-            holder.dragView!!, x, y
-        ) || ViewUtil.hitTest(holder.image!!, x, y))
-    }
+        if (dataSet.size == 0 or 1 || isInQuickSelectMode) {
+            return false
+        }
+        val dragHandle = holder.dragView ?: return false
 
-    override fun onGetItemDraggableRange(holder: ViewHolder, position: Int): ItemDraggableRange {
-        return ItemDraggableRange(1, dataSet.size)
+        val handleWidth = dragHandle.width
+        val handleHeight = dragHandle.height
+        val handleLeft = dragHandle.left
+        val handleTop = dragHandle.top
+
+        return (x >= handleLeft && x < handleLeft + handleWidth &&
+                y >= handleTop && y < handleTop + handleHeight) && position != 0
     }
 
     override fun onMoveItem(fromPosition: Int, toPosition: Int) {
-        if (onMoveItemListener != null && fromPosition != toPosition) {
-            onMoveItemListener.onMoveItem(fromPosition - 1, toPosition - 1)
-        }
+        dataSet.add(toPosition - 1, dataSet.removeAt(fromPosition - 1))
+    }
+
+    override fun onGetItemDraggableRange(holder: ViewHolder, position: Int): ItemDraggableRange {
+        return ItemDraggableRange(1, itemCount - 1)
     }
 
     override fun onCheckCanDrop(draggingPosition: Int, dropPosition: Int): Boolean {
-        return dropPosition > 0
+        return true
     }
 
     override fun onItemDragStarted(position: Int) {
@@ -87,53 +164,9 @@ class OrderablePlaylistSongAdapter(
         notifyDataSetChanged()
     }
 
-    interface OnMoveItemListener {
-        fun onMoveItem(fromPosition: Int, toPosition: Int)
-    }
-
-    inner class ViewHolder(itemView: View) : PlaylistSongAdapter.ViewHolder(itemView),
-        DraggableItemViewHolder {
-        @DraggableItemStateFlags
-        private var mDragStateFlags: Int = 0
-
-        override var songMenuRes: Int
-            get() = R.menu.menu_item_playlist_song
-            set(value) {
-                super.songMenuRes = value
-            }
-
-        init {
-            if (dragView != null) {
-                if (onMoveItemListener != null) {
-                    dragView?.visibility = View.VISIBLE
-                } else {
-                    dragView?.visibility = View.GONE
-                }
-            }
+    fun saveSongs(playlistEntity: PlaylistEntity) {
+        activity.lifecycleScope.launch(Dispatchers.IO) {
+            libraryViewModel.insertSongs(dataSet.toSongsEntity(playlistEntity))
         }
-
-        override fun onSongMenuItemClick(item: MenuItem): Boolean {
-            when (item.itemId) {
-                R.id.action_remove_from_playlist -> {
-                    RemoveFromPlaylistDialog.create(song as PlaylistSong)
-                        .show(activity.supportFragmentManager, "REMOVE_FROM_PLAYLIST")
-                    return true
-                }
-            }
-            return super.onSongMenuItemClick(item)
-        }
-
-        @DraggableItemStateFlags
-        override fun getDragStateFlags(): Int {
-            return mDragStateFlags
-        }
-
-        override fun setDragStateFlags(@DraggableItemStateFlags flags: Int) {
-            mDragStateFlags = flags
-        }
-    }
-
-    companion object {
-        val TAG: String = OrderablePlaylistSongAdapter::class.java.simpleName
     }
 }
